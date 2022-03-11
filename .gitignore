@@ -4,5 +4,5 @@
 # ignore Rhistory files
 *.Rhistory
 
-# ignore CIO_Brief powerpoint
-CIO_Brief.pptx
+# ignore all powerpoint files
+*.pptx
