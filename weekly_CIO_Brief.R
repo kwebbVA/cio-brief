@@ -86,16 +86,32 @@ d %<>% left_join(weekTable %>% select(date, weekNum, weekName), by = c('s_date' 
          Primary_SystemApplication_Affected = ifelse(Primary_SystemApplication_Affected == "Telecommunications Services", "Telecom Services", Primary_SystemApplication_Affected),
          curWeek = ifelse(weekNum == 0, 1, 0))
 
+d %<>% 
+  mutate(Primary_Culpable_System = ifelse(Primary_Culpable_System == "Other" | 
+                                            Primary_Culpable_System == "Unknown", 
+                                          "Under Review", Primary_Culpable_System),
+         incident_state = as.character(incident_state), 
+         state = case_when(incident_state == "Resolved" | incident_state == "Closed" ~ "Resolved", 
+                           incident_state == "On Hold" ~ "In Progress",
+                           TRUE ~ incident_state)) 
+
 d_bkup <- d
 
+d %>% filter(curWeek == 1) %>% 
+  select(number, s_datetime, ttr, state, 
+         Primary_Culpable_System, Incident_Short_Description) %>% 
+  arrange(s_datetime) %>% 
+  fwrite(here("data/current_week_data.csv"))
 
-new_culps = fread(here("data/updated_culps.csv")) %>% 
-  rename(p1 = Primary_Culpable_System)
 
-d %<>% left_join(new_culps, by = 'number') %>% 
-  rowwise() %>% 
-  mutate(Primary_Culpable_System = ifelse(number %in% new_culps$number, p1, Primary_Culpable_System)) %>% 
-  ungroup()
+
+# new_culps = fread(here("data/updated_culps.csv")) %>% 
+#   rename(p1 = Primary_Culpable_System)
+# 
+# d %<>% left_join(new_culps, by = 'number') %>% 
+#   rowwise() %>% 
+#   mutate(Primary_Culpable_System = ifelse(number %in% new_culps$number, p1, Primary_Culpable_System)) %>% 
+#   ungroup()
 # d %>% filter(number %in% new_culps$number) %>% select(number, Primary_Culpable_System, p1)
 
 ##### Read in Template Powerpoint #####
@@ -195,12 +211,12 @@ getText <- function(textVal, fSize = 24, tAlign = "left",
 ##### Top Left Table #####
 
 slide_topLeft_table = d %>%
-  filter(curWeek == 1 & Incident_State == "Resolved") %>% #Filter for current month only
+  filter(curWeek == 1 & state == "Resolved") %>% #Filter for current month only
   group_by(Incident_Priority, Incident_Pillar, .drop = FALSE) %>%
   summarise(N=n(), .groups = 'drop') %>%
   spread(key = Incident_Priority, value = N) %>%
   merge(d %>%
-          filter(weekNum %in% 1:12 & Incident_State == "Resolved") %>% #Excludes the past week
+          filter(weekNum %in% 1:12 & state == "Resolved") %>% #Excludes the past week
           group_by(Incident_Priority, Incident_Pillar, .drop = FALSE) %>%
           summarise(N=n(), .groups = 'drop') %>%
           spread(key = Incident_Priority, value = N), by = "Incident_Pillar")
@@ -242,12 +258,12 @@ d %>%
 ##### Top Right Table #####
 
 slide_topRight_table = d %>% filter(curWeek == 1) %>% 
-  select(s_date, Incident_State, ttr) %>% 
+  select(s_date, state, ttr) %>% 
   right_join(weekTable %>% filter(weekNum == 0) %>% select(date, weekday), by = c('s_date' = 'date')) %>% 
   group_by(weekday, s_date) %>% 
-  summarize(Canceled = sum(Incident_State == "Canceled"),
-            `In Progress` = sum(Incident_State == "In Progress"),
-            Resolved = sum(Incident_State == "Resolved"),
+  summarize(Canceled = sum(state == "Canceled"),
+            `In Progress` = sum(state == "In Progress"),
+            Resolved = sum(state == "Resolved"),
             `Total Time to Repair (TTR)` = sum(ttr, na.rm = TRUE) %>% round(1), 
             .groups = 'drop') %>% 
   mutate_if(is.numeric, ~ifelse(is.na(.), 0, .)) %>% 
@@ -271,7 +287,7 @@ slide_topRight_finished = slide_topRight_table %>%
 
 ##### Bottom Left graph #####
 
-weeklyPlot_d = d %>% filter(weekNum <= 51 & Incident_State == "Resolved") %>% 
+weeklyPlot_d = d %>% filter(weekNum <= 51 & state == "Resolved") %>% 
   arrange(weekNum) %>% 
   group_by(weekNum, curWeek) %>% 
   summarize(mttr = mean(ttr, na.rm = TRUE), 
@@ -302,7 +318,8 @@ weeklyPlot = weeklyPlot_d %>%
                                    size = weeklyPlot_d$sizetext,
                                    colour = weeklyPlot_d$colortext))
   
-pillarCounts = d %>% count(weekNum, weekName, Incident_Pillar) %>% rowwise() %>% 
+pillarCounts = d %>% 
+  count(weekNum, weekName, Incident_Pillar) %>% rowwise() %>% 
   mutate(sunday = str_split(weekName, " ")[[1]][1]) %>% ungroup() %>% 
   filter(!is.na(sunday)) %>% 
   select(-weekName) %>% 
@@ -331,11 +348,12 @@ pillarPlot = pillarCounts %>%
 
 ##### Bottom Right graph #####
 
-top5_culp = d %>% filter(weekNum <= 26 & Incident_State == "Resolved") %>% 
+top5_culp = d %>% filter(weekNum <= 26 & state == "Resolved" & 
+                           Primary_Culpable_System != "Under Review") %>% 
   count(Primary_Culpable_System) %>% 
   arrange(desc(n)) %>% head(5)
 
-top5_bar = d %>% filter(curWeek == 1 & Incident_State == "Resolved") %>% 
+top5_bar = d %>% filter(curWeek == 1 & state == "Resolved") %>% 
   count(Primary_Culpable_System) %>% 
   rename(n_curWeek = n) %>% 
   right_join(top5_culp, by = 'Primary_Culpable_System') %>% 
@@ -357,7 +375,7 @@ top5_bar_finished = top5_bar %>% pivot_longer(c(n_curWeek, n)) %>%
 
 ##### Last time broken #####
 
-count_culps = d %>% filter(curWeek == 1 & Incident_State == "Resolved") %>% 
+count_culps = d %>% filter(curWeek == 1 & state == "Resolved") %>% 
   group_by(Primary_Culpable_System) %>% 
   summarize(n = n(), 
             tttr = sum(ttr, na.rm = TRUE) %>% round(1))
@@ -365,7 +383,8 @@ count_culps = d %>% filter(curWeek == 1 & Incident_State == "Resolved") %>%
 culp_systems = count_culps %>% 
   pull(Primary_Culpable_System) %>% as.character()
 
-culpTable = d %>% filter(curWeek == 0) %>% filter(Primary_Culpable_System %in% culp_systems) %>% 
+culpTable_0 = d %>% filter(curWeek == 0) %>% 
+  filter(Primary_Culpable_System %in% culp_systems) %>% 
   group_by(Primary_Culpable_System) %>% 
   slice(n()) %>% select(s_date, Primary_Culpable_System, curWeek) %>% 
   ungroup() %>% 
@@ -385,7 +404,26 @@ culpTable = d %>% filter(curWeek == 0) %>% filter(Primary_Culpable_System %in% c
          Count = n,
          `Most Recent Date Prior to Current Week` = `0`,
          `Earliest Date for Current Week` = `1`,
-         `Days Since Last Major Incident` = days_since) %>% 
+         `Days Since Last Major Incident` = days_since)
+
+if("EHRM" %in% culpTable_0$`Culpable System`){
+  ehrm_culp = d %>% filter(curWeek == 0) %>% 
+    filter(grepl("cerner|ehrm", Primary_Culpable_System, ignore.case = TRUE)) %>% 
+    group_by(Primary_Culpable_System) %>% 
+    slice(n()) %>% select(s_date, Primary_Culpable_System, curWeek) %>% 
+    ungroup() %>% 
+    arrange(s_date) %>% 
+    slice(n())
+  
+  culpTable_0 %<>% 
+    mutate(`Most Recent Date Prior to Current Week` = ifelse(`Culpable System` == "EHRM", 
+                                                             ehrm_culp$s_date %>% as.character(),
+                                                             `Most Recent Date Prior to Current Week`),
+           `Days Since Last Major Incident` = as_date(`Earliest Date for Current Week`) - as_date(`Most Recent Date Prior to Current Week`)) %>% 
+    arrange(`Days Since Last Major Incident`)
+}
+
+culpTable = culpTable_0 %>% 
   flextable() %>% 
   width(j = 1, width = .95) %>%
   width(j = 2, width = .55) %>%
@@ -458,7 +496,7 @@ dates1 = d %>% filter(curWeek == 0 & Primary_Culpable_System == "VMware vCenter 
 
 ##### Distributions of Weekly Counts and Total TTR #####
 
-d_dist = d %>% filter(Incident_State == "Resolved") %>% 
+d_dist = d %>% filter(state == "Resolved") %>% 
   group_by(weekNum) %>% 
   summarize(n = n(), 
             total_ttr = sum(ttr, na.rm = TRUE))
@@ -529,14 +567,14 @@ dplot2 = d_dist %>%
   scale_x_continuous(breaks = seq(0, 1250, by = 250), minor_breaks = NULL) +
   # scale_x_continuous(breaks = breakLines, minor_breaks = NULL) + 
   geom_segment(aes(x = mean(total_ttr), xend = mean(total_ttr), y = 0, yend = maxVal_ttr), linetype = 'dashed') + 
-  geom_segment(aes(x = weekVals[1], xend = weekVals[1], y = 0, yend = xVals[1]), col = 'red', linetype = 'dashed') + 
-  geom_segment(data = prev5, aes(x = x, xend = x, y = 0, yend = y), col = c("#FC9C9C"), linetype = 'dashed') + 
+  geom_segment(data = prev5, aes(x = x, xend = x, y = 0, yend = y), col = "grey", linetype = 'dashed') + 
   geom_segment(aes(x = 950, xend = 1050, y = breakLinesy[6] + .0005, yend = breakLinesy[6] + .0005), linetype = 'dashed') + 
   geom_segment(aes(x = 950, xend = 1050, y = breakLinesy[6] + .00025, yend = breakLinesy[6] + .00025), col = 'red', linetype = 'dashed') + 
-  geom_segment(aes(x = 950, xend = 1050, y = breakLinesy[6], yend = breakLinesy[6]), col = c("#FC9C9C"), linetype = 'dashed') +
+  geom_segment(aes(x = 950, xend = 1050, y = breakLinesy[6], yend = breakLinesy[6]), col = "grey", linetype = 'dashed') +
+  geom_segment(aes(x = weekVals[1], xend = weekVals[1], y = 0, yend = xVals[1]), col = 'red', linetype = 'dashed') + 
   geom_text(aes(x = 1185, y = breakLinesy[6] + .00051, label = "Average Value"), linetype = 'dashed', size = 2.2) + 
   geom_text(aes(x = 1183, y = breakLinesy[6] + .00026, label = "Current Week"), col = 'red', linetype = 'dashed', size = 2.2) + 
-  geom_text(aes(x = 1175, y = breakLinesy[6] + .00001, label = "Past Weeks"), col = c("#FC9C9C"), linetype = 'dashed', size = 2.2) +
+  geom_text(aes(x = 1175, y = breakLinesy[6] + .00001, label = "Past Weeks"), col = "grey", linetype = 'dashed', size = 2.2) +
   geom_text(data = data.frame(x = breakLines %>% as.vector(), y = breakLinesy, text = names(breakLines)), 
             aes(x = x, y = y, label = text), size = 2) + 
   xlab("\nTotal Weekly TTR (Hours)") + 

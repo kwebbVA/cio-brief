@@ -85,10 +85,15 @@ d_all %<>% mutate(
   WHEN = ifelse(weekend == 1 | holiday == 1 | hour >= 20 | hour <= 8, 1, 0),
   vclFlag = as.factor(ifelse(
     (Primary_Culpable_System == 'VCL') | (grepl("VCL",Primary_SystemApplication_Affected)) |
-      (grepl("VCL",SystemsApplications_Affected)) | (grepl("VCL",Incident_Short_Description)) |
+      (grepl("VCL",Additional_SystemsApplications_Affected)) | (grepl("VCL",Incident_Short_Description)) |
       (grepl("Veterans Crisis Line",Incident_Short_Description)), 1, 0))) %>%
   filter(SolarWinds_Alert == 'No' | No_Call_Indicator == 'No') %>%
-  mutate(Incident_Priority = factor(Incident_Priority))
+  mutate(Incident_Priority = factor(Incident_Priority)) %>% 
+  mutate(nChar = nchar(as.character(Incident_Ticket))) %>% 
+  rowwise() %>% 
+  mutate(number = ifelse(nChar == 10, paste0("INC0", str_split(as.character(Incident_Ticket), "INC")[[1]][2]),
+                         as.character(Incident_Ticket))) %>% 
+  ungroup()
 
 ttCols = colnames(d_all)[grepl('^tt', colnames(d_all))] 
 
@@ -226,11 +231,11 @@ d_all %>%
 # for the required fields for weekly rundown.
 
 d_all %>%
-  filter_at(vars(Incident_Category, Primary_Culpable_System, Primary_SystemApplication_Affected,SystemsApplications_Affected), any_vars(.=="")) %>%
+  filter_at(vars(Incident_Category, Primary_Culpable_System, Primary_SystemApplication_Affected,Additional_SystemsApplications_Affected), any_vars(.=="")) %>%
   filter(Incident_State == "Resolved") %>%
   filter(Incident_Ticket != 'INC20487682') %>% # Incident INC20487682 is an anomaly per Brian: "it is correct as you see it: the resolution was identified a couple of hours prior to the call being initiated. 
   # It was stated as so by one of the stakeholders on the call and Ryan Vandelinder reported it accurately."
-  select(Incident_Ticket, date, Incident_Category, Primary_Culpable_System, Primary_SystemApplication_Affected, SystemsApplications_Affected) %>%
+  select(Incident_Ticket, date, Incident_Category, Primary_Culpable_System, Primary_SystemApplication_Affected, Additional_SystemsApplications_Affected) %>%
   arrange(desc(date)) %>%
   write.csv('missingFields.csv', row.names = F)
 
@@ -244,7 +249,7 @@ sp_snow_all = s_all %>%
   merge(d_all %>%
           filter(date >= startOfLastMonth-1) %>%
           arrange(date) %>% 
-          select(Incident_Ticket, date, Incident_State, Primary_Culpable_System, Primary_SystemApplication_Affected, SystemsApplications_Affected, ttd, ttta, ttir,ttr),
+          select(Incident_Ticket, date, Incident_State, Primary_Culpable_System, Primary_SystemApplication_Affected, Additional_SystemsApplications_Affected, ttd, ttta, ttir,ttr),
         by.x = 'number', by.y = 'Incident_Ticket', all =TRUE
   ) 
 
