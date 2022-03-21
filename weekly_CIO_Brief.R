@@ -21,6 +21,21 @@ vasi = fread(paste0(dataPath, 'VASI/VASystemsInventory_02242022.csv'),
 
 colnames(vasi) = make_nice_cols(colnames(vasi))
 
+p_all = fread(here("data/problem.csv"))
+colnames(p_all) = make_nice_cols(colnames(p_all))
+
+p_d = p_all %>% 
+  mutate(caused_by_change = ifelse(u_problem_caused_by_change == "TRUE", 1, 0), 
+         request_number = grepl("CHG", u_change_request_numbernumber) %>% as.numeric, 
+         planned = case_when(request_number == 1 ~ 'Planned',
+                             caused_by_change == 1 & request_number == 0 ~ 'Unplanned',
+                             TRUE ~ 'Not Caused by Change')) %>% 
+  group_by(parentnumber) %>%
+  summarize(nprobs = n_distinct(number), 
+            ncaused_by = sum(caused_by_change), 
+            nchanges = sum(request_number), 
+            planned = unique(planned))
+
 sy = fread(paste0(dataPath, 'OTG SP Data Extracts/Systems and Product Lines.csv'), 
            stringsAsFactors = FALSE, strip.white=TRUE)
 
@@ -47,9 +62,11 @@ d = d_all %>%
   left_join(sy %>% select(System_Acronym, VASI_Id, AMOITAM_Portfolio),
             by = c('Primary_Culpable_System' = "System_Acronym")) %>%
   left_join(vasi %>% mutate_at(vars(VASI_Id), as.character), by = 'VASI_Id') %>%
+  left_join(p_d, by = c('number' = 'parentnumber')) %>%
   mutate(Modified_System_Acronym = 
            ifelse(AMOITAM_Portfolio=='Unknown (Not in VASI)', 'Unknown (Not in VASI)', 
-                  as.character(System_Acronym)))
+                  as.character(System_Acronym)), 
+         planned = ifelse(is.na(planned), "Not Caused by Change", planned))
 
 refDate = str_split(getwd(), "/")[[1]] %>% last() %>% as_date()  ## This MUST be a Friday
 curWeekSun = refDate - days(12) # Sunday of week before
@@ -99,8 +116,11 @@ d_bkup <- d
 
 d %>% filter(curWeek == 1) %>% 
   select(number, s_datetime, ttr, state, 
-         Primary_Culpable_System, Incident_Short_Description) %>% 
+         Primary_Culpable_System, planned, 
+         Incident_Short_Description) %>% 
   arrange(s_datetime) %>% 
+  mutate(proposed_on = as.character(s_datetime)) %>% 
+  select(number, proposed_on, everything(), -s_datetime) %>% 
   fwrite(here("data/current_week_data.csv"))
 
 
@@ -123,8 +143,8 @@ d %>% filter(curWeek == 1) %>%
 cioBriefDueDate = here() %>% str_split("/") %>% 
   pluck(1) %>% last()
 
-titleFile = here("../markdown_files/titlePage.jpg")
-footerFile = here("../markdown_files/background.JPG")
+titleFile = here("titlePage.jpg")
+footerFile = here("background.jpg")
 
 # box height, box width, x position, y position
 title_L = c(.94, 8.45, 3.56, 2.11)  
@@ -210,6 +230,24 @@ getText <- function(textVal, fSize = 24, tAlign = "left",
 
 ##### Top Left Table #####
 
+memBen_n = d %>%
+  filter(weekNum %in% 0:12 & Incident_State == "Resolved") %>% 
+  count(Product_Line) %>% filter(grepl("memorial", Product_Line, ignore.case = TRUE)) %>% 
+  nrow()
+if(memBen_n == 0){
+  mem_d = data.frame(Incident_Pillar = "- Memorial and Services",
+                     crit_cur = 0, 
+                     high_cur = 0, 
+                     crit_12 = 0,
+                     high_12 = 0)
+} else{
+  mem_d = data.frame(Incident_Pillar = "- Memorial and Services",
+                     crit_cur = "x", 
+                     high_cur = "x", 
+                     crit_12 = "x",
+                     high_12 = "x")
+}
+
 slide_topLeft_table = d %>%
   filter(curWeek == 1 & state == "Resolved") %>% #Filter for current month only
   group_by(Incident_Priority, Incident_Pillar, .drop = FALSE) %>%
@@ -221,33 +259,42 @@ slide_topLeft_table = d %>%
           summarise(N=n(), .groups = 'drop') %>%
           spread(key = Incident_Priority, value = N), by = "Incident_Pillar")
 
-slide_topLeft_finished = slide_topLeft_table %>% 
+colnames(mem_d) = colnames(slide_topLeft_table)
+
+slide_topLeft_table2 = slide_topLeft_table %>% 
+  bind_rows(mem_d) %>% 
+  slice(1, 5, 2:4)
+
+slide_topLeft_finished = slide_topLeft_table2 %>% 
   bind_rows(slide_topLeft_table %>%
               summarise(across(where(is.numeric), sum))) %>%
-  mutate(Incident_Pillar = fct_expand(c(levels(Incident_Pillar), "Grand Totals"))) %>%
+  mutate(Incident_Pillar = fct_expand(c("Benefits", "- Memorial and Services", "Corporate", 
+                                        "Enterprise Services", "Health", "Grand Totals"))) %>%
   set_colnames(c('Business Line','1-Critical ',"2-High ","1-Critical","2-High")) %>%
   flextable() %>% 
   add_header_row(values = c("", paste0(w11, ' to ', w22), "Previous 12 Weeks"),
                  colwidths = c(1, 2, 2)) %>% 
-  bg(i = 1:4, j = c(2,4), bg = '#ed7d31') %>% 
-  bg(i = 1:4, j = c(3,5), bg = '#F9C642') %>% 
+  bg(i = 1:5, j = c(2,4), bg = '#ed7d31') %>% 
+  bg(i = 1:5, j = c(3,5), bg = '#F9C642') %>% 
   bg(i = 1, j = 2:5, part = "header", bg = "#4773AA") %>% 
   bg(i = 2, part = "header", bg = "#4773AA") %>% 
   # bg(i = 5, part = "body", bg = "#d9d9d9") %>% 
   color(i = 1:2, part = "header", color = "white") %>% 
   bold(i = 1:2, part = "header") %>% 
-  bold(i = 5, part = "body") %>% 
+  bold(i = 6, part = "body") %>% 
+  italic(i = 2, part = "body") %>% 
   align(i = 1:2, part = "header", align = "center") %>% 
   # align(i = 1:5, j = 2:5, part = "body", align = "right") %>% 
-  align(i = 1:5, j = 2:5, part = "body", align = "center") %>% 
+  align(i = 1:6, j = 2:5, part = "body", align = "center") %>% 
   align(j = 1, part = "body", align = "left") %>% 
   border_remove() %>%
   width(j = 1, width = 2) %>%
   width(j = 2:5, width = 1) %>% 
+  fontsize(i = 2, part = "body", size = 10) %>% 
   flextable::border(i = 2, j = 2:5, part = "header", border.top = fp_border(color = "white")) %>% 
   flextable::border(i = 1, j = 2:5, part = "header", border.bottom = fp_border(color = "white")) %>% 
   flextable::border(i = 1, part = "body", border.top = fp_border(color = "black")) %>% 
-  flextable::border(i = 4, part = "body", border.bottom = fp_border(color = "black")) %>% 
+  flextable::border(i = 5, part = "body", border.bottom = fp_border(color = "black")) %>% 
   flextable::border(j = 3, part = "all", border.right = fp_border(color = "black"))
 
 # check if there's memorial product line in anything to be reported
@@ -319,6 +366,7 @@ weeklyPlot = weeklyPlot_d %>%
                                    colour = weeklyPlot_d$colortext))
   
 pillarCounts = d %>% 
+  filter(date >= "2019-09-01") %>% 
   count(weekNum, weekName, Incident_Pillar) %>% rowwise() %>% 
   mutate(sunday = str_split(weekName, " ")[[1]][1]) %>% ungroup() %>% 
   filter(!is.na(sunday)) %>% 
@@ -346,6 +394,67 @@ pillarPlot = pillarCounts %>%
   xlab("Date of Week Start (Sunday)") + 
   scale_fill_manual("Business Line", values = pillarColors)
 
+planned_d = d %>% filter(weekNum %in% 0:12) %>% 
+  mutate(group = ifelse(weekNum == 0, paste0(w11, ' to ', w22), "Previous 12 Weeks")) %>% 
+  group_by(group) %>% 
+  count(planned) %>% 
+  mutate(fraction = n / sum(n), 
+         ymax = cumsum(fraction), 
+         ymin = lag(ymax, default = 0), 
+         labelPosition = (ymax + ymin) / 2, 
+         label = paste0(planned, "\n Count: ", n)) 
+
+plannedPlot1 = ggplot(planned_d %>% filter(group != "Previous 12 Weeks"), 
+                      aes(ymax=ymax, ymin=ymin, xmax=4, xmin=3, fill=planned)) +
+  geom_rect() +
+  geom_label(x=3.5, aes(y=labelPosition, label=label), size=3) +
+  scale_fill_brewer(palette=4) +
+  coord_polar(theta="y") +
+  xlim(c(2, 4)) +
+  theme_void() +
+  ggtitle(paste0(w11, ' to ', w22)) + 
+  theme(legend.position = "none", 
+        plot.title=element_text(hjust=0.5, size = 10))  
+
+plannedPlot2 = ggplot(planned_d %>% filter(group == "Previous 12 Weeks"), 
+       aes(ymax=ymax, ymin=ymin, xmax=4, xmin=3, fill=planned)) +
+  geom_rect() +
+  geom_label(x=3.5, aes(y=labelPosition, label=label), size=3) +
+  scale_fill_brewer(palette=4) +
+  coord_polar(theta="y") +
+  xlim(c(2, 4)) +
+  theme_void() +
+  ggtitle("Previous 12 Weeks") + 
+  theme(legend.position = "none", 
+        plot.title=element_text(hjust=0.5, size = 10)) 
+
+arrangeGrob(plannedPlot1, plannedPlot2, ncol = 2, 
+                          top = textGrob("Major Incidents with Planned Changes, Unplanned Changes,\nand Not Caused by Change",
+                                         gp=gpar(fontsize=12,font="Ariel"))) %>% 
+  ggsave(file = here("data/plannedPlot.png"), height = slide1_c[1], width = slide1_c[2])
+
+planned_d = d %>% filter(s_date > '2021-03-01') %>% 
+  mutate(sundayDate = map_chr(weekName, ~str_split(., " ")[[1]][1])) %>% 
+  count(planned, weekNum, sundayDate) %>% 
+  arrange(desc(weekNum)) %>% 
+  mutate(sundayDate = factor(sundayDate))
+
+plannedPlot = ggplot(planned_d, aes(sundayDate, n, fill = planned)) + 
+  geom_col() + 
+  theme_minimal() + 
+  scale_y_continuous(breaks = seq(0, 25, by = 5), minor_breaks = NULL) + 
+  scale_fill_manual("", values = c("Not Caused by Change" = 'dark grey', "Planned" = "orange", 
+                                    "Unplanned" = "red")) + 
+  ylab("Count\n") + 
+  xlab("\n Week (Date on Sunday)") + 
+  ggtitle("Weekly Counts of Major Incidents by Change Status R12 Months") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, 
+                                   size = weeklyPlot_d$sizetext,
+                                   colour = weeklyPlot_d$colortext))
+
+planned_percents = d %>% filter(s_date > '2021-03-01') %>% 
+  count(planned) %>% mutate(p = prop.table(n)*100)
+
 ##### Bottom Right graph #####
 
 top5_culp = d %>% filter(weekNum <= 26 & state == "Resolved" & 
@@ -365,13 +474,20 @@ top5_bar_finished = top5_bar %>% pivot_longer(c(n_curWeek, n)) %>%
   mutate(name = ifelse(name == "n", "Previous Data", "Current Week")) %>% 
   ggplot(aes(value, Primary_Culpable_System)) + 
   geom_col(aes(fill = name)) + 
-  geom_text(data = top5_bar %>% filter(n_curWeek != 0), aes(n + n_curWeek + 2, Primary_Culpable_System, label = n_curWeek), col = 'red') + 
-  geom_text(data = top5_bar, aes(n - 3, Primary_Culpable_System, label = n), col = 'white') + 
+  geom_text(data = top5_bar %>% filter(n_curWeek != 0), aes(n + n_curWeek + 5, Primary_Culpable_System, label = n_curWeek), col = 'red') + 
+  geom_text(data = top5_bar, aes(n - 5, Primary_Culpable_System, label = n), col = 'white') + 
   ylab("") + 
   xlab("Number of Incidents") + 
   ggtitle("Top 5 Culpable Systems for Past 6 months") + 
   theme_minimal() + 
   scale_fill_manual("Data Grouping", values = c("Current Week" = 'red', 'Previous Data' = "#757373"))
+
+avg_telecom = d %>% filter(weekNum <= 26 & curWeek != 1 & state == "Resolved" & 
+                             Primary_Culpable_System == "Telecom Services") %>% 
+  count(weekNum) %>% summarize(mean = mean(n))
+avg_network = d %>% filter(weekNum <= 26 & curWeek != 1 & state == "Resolved" & 
+                             Primary_Culpable_System == "Network Services") %>% 
+  count(weekNum) %>% summarize(mean = mean(n))
 
 ##### Last time broken #####
 
@@ -395,7 +511,8 @@ culpTable_0 = d %>% filter(curWeek == 0) %>%
               select(s_date, Primary_Culpable_System, curWeek)) %>%
   mutate(s_date = as.character(s_date)) %>% 
   pivot_wider(names_from = curWeek, values_from = s_date) %>% 
-  mutate(days_since = as_date(`1`) - as_date(`0`)) %>% 
+  mutate(`0` = ifelse(Primary_Culpable_System == "Under Review", NA, `0`),
+         days_since = as_date(`1`) - as_date(`0`)) %>% 
   inner_join(count_culps, by = 'Primary_Culpable_System') %>% 
   arrange(days_since) %>% 
   select(Primary_Culpable_System, n, tttr, `0`, `1`, days_since) %>% 
@@ -421,6 +538,14 @@ if("EHRM" %in% culpTable_0$`Culpable System`){
                                                              `Most Recent Date Prior to Current Week`),
            `Days Since Last Major Incident` = as_date(`Earliest Date for Current Week`) - as_date(`Most Recent Date Prior to Current Week`)) %>% 
     arrange(`Days Since Last Major Incident`)
+}
+
+if("Under Review" %in% culpTable_0$`Culpable System`){
+  culpTable_1 = culpTable_0 %>% 
+    filter(`Culpable System` != "Under Review")
+  
+  culpTable_0 = culpTable_1 %>% 
+    bind_rows(culpTable_0 %>% filter(`Culpable System` == "Under Review"))
 }
 
 culpTable = culpTable_0 %>% 
@@ -496,7 +621,9 @@ dates1 = d %>% filter(curWeek == 0 & Primary_Culpable_System == "VMware vCenter 
 
 ##### Distributions of Weekly Counts and Total TTR #####
 
-d_dist = d %>% filter(state == "Resolved") %>% 
+d_dist = d %>% 
+  # filter(state == "Resolved") %>% 
+  filter(!is.na(ttr)) %>% 
   group_by(weekNum) %>% 
   summarize(n = n(), 
             total_ttr = sum(ttr, na.rm = TRUE))
@@ -654,9 +781,12 @@ my_pres %<>%
   ph_with(value = slide_topRight_finished, 
           location = ph_location(height = slide1_b[1], width = slide1_b[2],
                                  left = slide1_b[3], top = slide1_b[4])) %>% 
-  ph_with(value = pillarPlot, 
+  ph_with(value = pillarPlot,
           location = ph_location(height = slide1_c[1], width = slide1_c[2],
-                                 left = slide1_c[3], top = slide1_c[4])) %>% 
+                                 left = slide1_c[3], top = slide1_c[4])) %>%
+  # ph_with(value = external_img(here("data/plannedPlot.png")), 
+  #         location = ph_location(height = slide1_c[1], width = slide1_c[2],
+  #                                left = slide1_c[3], top = slide1_c[4])) %>% 
   ph_with(value = top5_bar_finished, 
           location = ph_location(height = slide1_d[1], width = slide1_d[2],
                                  left = slide1_d[3], top = slide1_d[4])) %>% 

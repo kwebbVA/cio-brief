@@ -8,7 +8,8 @@ analyticsPath = paste0("C:/Users/", Sys.getenv("username"),
                        "/Department of Veterans Affairs/Operations Triage Group (OTG) - Analytics - Documents")
 dataPath = "//r01slchsm01.r01.med.va.gov/ISL_Workgroups/Operations Triage Center/Production/Data Repository/"
 d = fread(paste0(dataPath, 'OTG SP Data Extracts/Incident (New).csv'), stringsAsFactors = TRUE,strip.white=TRUE)
-s = fread(paste0(analyticsPath,'/Publication/incident.csv'), stringsAsFactors = TRUE,strip.white=TRUE)
+# s = fread(paste0(analyticsPath,'/Publication/incident.csv'), stringsAsFactors = TRUE,strip.white=TRUE)
+s = fread(paste0(dataPath,'OTG SP Data Extracts/incident.csv'), stringsAsFactors = TRUE,strip.white=TRUE)
 
 # rename X.U.FEFF. columns
 colnames(d) = str_replace_all(colnames(d), 'X.U.FEFF.', '')
