@@ -37,10 +37,19 @@ prevQEnd = previous_quarter()$end
 
 s_all = s %>%
   mutate_at(vars(opened_at, resolved_at, closed_at, promoted_on), list(~lubridate::as_datetime(as.character(.), format = "%m/%d/%Y %H:%M", tz="EST"))) %>% 
-  mutate(automation = (grepl('integration', sys_created_by, ignore.case = TRUE) &
-           (grepl('soi|appdynamics|splunk|dynatrace|liveaction|solarwinds', sys_created_by, ignore.case = TRUE))))
+  mutate(automation = (grepl('integration', caller_id, ignore.case = TRUE) &
+           (grepl('soi|appdynamics|splunk|dynatrace|liveaction|solarwinds', caller_id, ignore.case = TRUE)))) %>% 
+  mutate_at(vars(opened_at, resolved_at, closed_at, promoted_on), 
+            list(~lubridate::as_datetime(as.character(.), format = "%Y-%m-%d %H:%M:%S", tz="EST"))) %>%
+  mutate(prom_datetime = ifelse(is.na(promoted_on), 
+                             opened_at %>% as.character() %>% as_datetime(), promoted_on) %>% as_datetime(tz="EST"))
   
 d_all = d %>%
+  mutate(nChar = nchar(as.character(Incident_Ticket))) %>% 
+  rowwise() %>% 
+  mutate(number = ifelse(nChar == 10, paste0("INC0", str_split(as.character(Incident_Ticket), "INC")[[1]][2]),
+                         as.character(Incident_Ticket))) %>% 
+  ungroup() %>% 
   mutate(Incident_Pillar = fct_relabel(Incident_Pillar, ~gsub(",.*", "", .x))) %>% #drop the char. after comma for levels in pillars
   mutate_at(vars(all_of(dateCols)), 
             list(~lubridate::as_datetime(as.character(.), format = "%m/%d/%Y %H:%M", tz="EST"))) %>%
@@ -71,7 +80,37 @@ d_all = d %>%
          yearMonth = paste0(year, '-', ifelse(nchar(month)==2, month, paste0('0',month))),
          month_name_year = paste0(month_name, "-", year), 
          weekday = lubridate::wday(HPICPI_Request_DateTime_ET, label = TRUE),
-         weekend = ifelse(weekday %in% c("Sat", "Sun"), 1, 0))
+         weekend = ifelse(weekday %in% c("Sat", "Sun"), 1, 0)) %>% 
+  left_join(s_all %>% select(number, incident_state, prom_datetime, problem_idu_problem_caused_by_change, automation),
+             by = 'number') %>% 
+  mutate(prom_date = lubridate::as_date(prom_datetime), 
+         prom_month_n = substr(prom_date, 1, 7) %>% factor %>% as.numeric(), 
+         prom_month = lubridate::month(prom_date), 
+         prom_month_name = month.abb[prom_month],
+         prom_year = lubridate::year(prom_date), 
+         prom_yearMonth = paste0(prom_year, '-', ifelse(nchar(prom_month)==2, prom_month, paste0('0',prom_month))),
+         prom_month_name_year = paste0(prom_month_name, "-", prom_year)) 
+
+weekTable = data.frame(date = seq.Date("2019-07-14" %>% as_date(),
+                                       # d %>% pull(s_date) %>% first(), 
+                                       Sys.Date(), by = 'day')) %>% 
+  mutate(weekday = lubridate::wday(date, label = TRUE)) %>% 
+  arrange(desc(date))
+
+sunTable = weekTable %>% filter(weekday == "Sun") %>%  
+  mutate(x = 1, weekNum = cumsum(x) - 1, 
+         weekName = paste0(date, " to ", date + lubridate::days(6)))
+
+weekTable %<>% left_join(sunTable %>% select(-x), by = c("date", "weekday")) %>% 
+  arrange(desc(date)) %>% 
+  fill(weekNum, weekName, .direction = "up")
+
+d_all %<>% left_join(weekTable %>% select(date, weekNum, weekName), by = c('prom_date' = 'date')) %>% 
+  mutate(Primary_Culpable_System = as.character(Primary_Culpable_System),
+         Primary_SystemApplication_Affected = as.character(Primary_SystemApplication_Affected),
+         Primary_Culpable_System = ifelse(Primary_Culpable_System == "Telecommunications Services", "Telecom Services", Primary_Culpable_System),
+         Primary_SystemApplication_Affected = ifelse(Primary_SystemApplication_Affected == "Telecommunications Services", "Telecom Services", Primary_SystemApplication_Affected),
+         curWeek = ifelse(weekNum == 0, 1, 0))
 
 d_all$holiday = map_dbl(d_all$hpicpi_date, 
                         function(x) ifelse(!is.na(x), tis::isHoliday(x, goodFriday = TRUE, inaug = TRUE, board = TRUE) %>% as.numeric, 0))
@@ -188,11 +227,11 @@ cio_x =  labs(x = "Month Issue Date")
 #d_all %>% write.csv(paste0('d_all_', Sys.Date(), '.csv'), row.names = F)
 
 #sum(d_all$Facilities_Affected == "", na.rm = FALSE)
-d_all %>%
-  filter(Incident_State == 'Resolved' & Facilities_Affected == "" & Other_Facilities_Affected =="") %>%
-  arrange(desc(date))%>%
-  select(Incident_Ticket, date, Incident_State, Facilities_Affected,Other_Facilities_Affected) %>%
-  write.csv('Missing_Facilities_Affected.csv', row.names = F)
+# d_all %>%
+#   filter(Incident_State == 'Resolved' & Facilities_Affected == "" & Other_Facilities_Affected =="") %>%
+#   arrange(desc(date))%>%
+#   select(Incident_Ticket, date, Incident_State, Facilities_Affected,Other_Facilities_Affected) %>%
+#   write.csv('Missing_Facilities_Affected.csv', row.names = F)
 
 #####################################################################
 # This is the list of incidents that have less than 11 char. in their ticket number

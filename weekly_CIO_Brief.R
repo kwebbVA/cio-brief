@@ -16,24 +16,23 @@ s0 = s_all %>%
          # sys_created_by = grepl('integration', sys_created_by, ignore.case = TRUE) & 
          #   (grepl('soi|appdynamics|splunk|dynatrace|liveaction|solarwinds', sys_created_by, ignore.case = TRUE)))
 
-vasi = fread(paste0(dataPath, 'VASI/VASystemsInventory_02242022.csv'), 
-             stringsAsFactors = FALSE, strip.white=TRUE, skip=1)
+vasi = readxl::read_excel(paste0(dataPath, 'VASI/VASystemsInventory_03162022.xlsx'), sheet = "Active + Inactive Systems", skip = 1)
 
 colnames(vasi) = make_nice_cols(colnames(vasi))
 
 p_all = fread(here("data/problem.csv"))
 colnames(p_all) = make_nice_cols(colnames(p_all))
 
-p_d = p_all %>% 
-  mutate(caused_by_change = ifelse(u_problem_caused_by_change == "TRUE", 1, 0), 
-         request_number = grepl("CHG", u_change_request_numbernumber) %>% as.numeric, 
+p_d = p_all %>%
+  mutate(caused_by_change = ifelse(u_problem_caused_by_change == "TRUE", 1, 0),
+         request_number = grepl("CHG", u_change_request_numbernumber) %>% as.numeric,
          planned = case_when(request_number == 1 ~ 'Planned',
                              caused_by_change == 1 & request_number == 0 ~ 'Unplanned',
-                             TRUE ~ 'Not Caused by Change')) %>% 
+                             TRUE ~ 'Not Caused by Change')) %>%
   group_by(parentnumber) %>%
-  summarize(nprobs = n_distinct(number), 
-            ncaused_by = sum(caused_by_change), 
-            nchanges = sum(request_number), 
+  summarize(nprobs = n_distinct(number),
+            ncaused_by = sum(caused_by_change),
+            nchanges = sum(request_number),
             planned = unique(planned))
 
 sy = fread(paste0(dataPath, 'OTG SP Data Extracts/Systems and Product Lines.csv'), 
@@ -65,7 +64,7 @@ d = d_all %>%
   left_join(p_d, by = c('number' = 'parentnumber')) %>%
   mutate(Modified_System_Acronym = 
            ifelse(AMOITAM_Portfolio=='Unknown (Not in VASI)', 'Unknown (Not in VASI)', 
-                  as.character(System_Acronym)), 
+                  as.character(System_Acronym)),
          planned = ifelse(is.na(planned), "Not Caused by Change", planned))
 
 refDate = str_split(getwd(), "/")[[1]] %>% last() %>% as_date()  ## This MUST be a Friday
@@ -108,15 +107,16 @@ d %<>%
                                             Primary_Culpable_System == "Unknown", 
                                           "Under Review", Primary_Culpable_System),
          incident_state = as.character(incident_state), 
-         state = case_when(incident_state == "Resolved" | incident_state == "Closed" ~ "Resolved", 
+         state = case_when(number == "INC21778691" ~ "Canceled",
+                           incident_state == "Resolved" | incident_state == "Closed" ~ "Resolved", 
                            incident_state == "On Hold" ~ "In Progress",
                            TRUE ~ incident_state)) 
 
 d_bkup <- d
 
 d %>% filter(curWeek == 1) %>% 
-  select(number, s_datetime, ttr, state, 
-         Primary_Culpable_System, planned, 
+  select(number, s_datetime, ttr, state, Incident_State,  
+         Primary_Culpable_System, Primary_Culpable_System_Justification, planned, 
          Incident_Short_Description) %>% 
   arrange(s_datetime) %>% 
   mutate(proposed_on = as.character(s_datetime)) %>% 
@@ -235,13 +235,13 @@ memBen_n = d %>%
   count(Product_Line) %>% filter(grepl("memorial", Product_Line, ignore.case = TRUE)) %>% 
   nrow()
 if(memBen_n == 0){
-  mem_d = data.frame(Incident_Pillar = "- Memorial and Services",
+  mem_d = data.frame(Incident_Pillar = "Memorial and Services",
                      crit_cur = 0, 
                      high_cur = 0, 
                      crit_12 = 0,
                      high_12 = 0)
 } else{
-  mem_d = data.frame(Incident_Pillar = "- Memorial and Services",
+  mem_d = data.frame(Incident_Pillar = "Memorial and Services",
                      crit_cur = "x", 
                      high_cur = "x", 
                      crit_12 = "x",
@@ -268,7 +268,7 @@ slide_topLeft_table2 = slide_topLeft_table %>%
 slide_topLeft_finished = slide_topLeft_table2 %>% 
   bind_rows(slide_topLeft_table %>%
               summarise(across(where(is.numeric), sum))) %>%
-  mutate(Incident_Pillar = fct_expand(c("Benefits", "- Memorial and Services", "Corporate", 
+  mutate(Incident_Pillar = fct_expand(c("Benefits", "Memorial and Services", "Corporate", 
                                         "Enterprise Services", "Health", "Grand Totals"))) %>%
   set_colnames(c('Business Line','1-Critical ',"2-High ","1-Critical","2-High")) %>%
   flextable() %>% 
@@ -282,7 +282,7 @@ slide_topLeft_finished = slide_topLeft_table2 %>%
   color(i = 1:2, part = "header", color = "white") %>% 
   bold(i = 1:2, part = "header") %>% 
   bold(i = 6, part = "body") %>% 
-  italic(i = 2, part = "body") %>% 
+  # italic(i = 2, part = "body") %>% 
   align(i = 1:2, part = "header", align = "center") %>% 
   # align(i = 1:5, j = 2:5, part = "body", align = "right") %>% 
   align(i = 1:6, j = 2:5, part = "body", align = "center") %>% 
@@ -290,7 +290,7 @@ slide_topLeft_finished = slide_topLeft_table2 %>%
   border_remove() %>%
   width(j = 1, width = 2) %>%
   width(j = 2:5, width = 1) %>% 
-  fontsize(i = 2, part = "body", size = 10) %>% 
+  # fontsize(i = 2, part = "body", size = 10) %>% 
   flextable::border(i = 2, j = 2:5, part = "header", border.top = fp_border(color = "white")) %>% 
   flextable::border(i = 1, j = 2:5, part = "header", border.bottom = fp_border(color = "white")) %>% 
   flextable::border(i = 1, part = "body", border.top = fp_border(color = "black")) %>% 
@@ -729,6 +729,10 @@ arrangeGrob(dplot1, dplot2, ncol = 2,
 
 N_caused_by = d %>% 
   filter(curWeek == 1 & problem_idu_problem_caused_by_change) %>% nrow()
+
+
+d %>% 
+  filter(curWeek == 1) %>% count(planned)
 
 
 
