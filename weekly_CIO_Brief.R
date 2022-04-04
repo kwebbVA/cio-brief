@@ -8,13 +8,13 @@ pacman::p_load(officer, lubridate, stringi, jpeg, timeperiodsR,
 source(paste0("C:/Users/", Sys.getenv("username"), 
               "/Department of Veterans Affairs/Operations Triage Group (OTG) - Analytics - Documents/Publication/preProcess.R"))
 
-s0 = s_all %>% 
-  mutate_at(vars(opened_at, promoted_on), 
-            list(~lubridate::as_datetime(as.character(.), format = "%Y-%m-%d %H:%M:%S", tz="EST"))) %>%
-  mutate(s_datetime = ifelse(is.na(promoted_on), 
-                             opened_at %>% as.character() %>% as_datetime(), promoted_on) %>% as_datetime(tz="EST"))
-         # sys_created_by = grepl('integration', sys_created_by, ignore.case = TRUE) & 
-         #   (grepl('soi|appdynamics|splunk|dynatrace|liveaction|solarwinds', sys_created_by, ignore.case = TRUE)))
+# s0 = s_all %>% 
+#   mutate_at(vars(opened_at, promoted_on), 
+#             list(~lubridate::as_datetime(as.character(.), format = "%Y-%m-%d %H:%M:%S", tz="EST"))) %>%
+#   mutate(s_datetime = ifelse(is.na(promoted_on), 
+#                              opened_at %>% as.character() %>% as_datetime(), promoted_on) %>% as_datetime(tz="EST"))
+#          # sys_created_by = grepl('integration', sys_created_by, ignore.case = TRUE) & 
+#          #   (grepl('soi|appdynamics|splunk|dynatrace|liveaction|solarwinds', sys_created_by, ignore.case = TRUE)))
 
 vasi = readxl::read_excel(paste0(dataPath, 'VASI/VASystemsInventory_03162022.xlsx'), sheet = "Active + Inactive Systems", skip = 1)
 
@@ -41,22 +41,17 @@ sy = fread(paste0(dataPath, 'OTG SP Data Extracts/Systems and Product Lines.csv'
 colnames(sy) = make_nice_cols(colnames(sy))
 
 d = d_all %>% 
-  mutate(nChar = nchar(as.character(Incident_Ticket))) %>% 
-  rowwise() %>% 
-  mutate(number = ifelse(nChar == 10, paste0("INC0", str_split(as.character(Incident_Ticket), "INC")[[1]][2]),
-                         as.character(Incident_Ticket))) %>% 
-  ungroup() %>% 
   # inner_join(s0 %>% select(number, s_datetime, problem_idu_problem_caused_by_change, sys_created_by),
-  inner_join(s0 %>% select(number, incident_state, s_datetime, problem_idu_problem_caused_by_change, automation),
-             by = 'number') %>% 
-  mutate(s_date = lubridate::as_date(s_datetime), 
-         month_n = substr(s_date, 1, 7) %>% factor %>% as.numeric(), 
-         month = lubridate::month(s_date), 
-         month_name = month.abb[month],
-         year = lubridate::year(s_date), 
-         yearMonth = paste0(year, '-', ifelse(nchar(month)==2, month, paste0('0',month))),
-         month_name_year = paste0(month_name, "-", year)) %>% 
-  arrange(s_date) %>% 
+  # inner_join(s0 %>% select(number, incident_state, s_datetime, problem_idu_problem_caused_by_change, automation),
+  #            by = 'number') %>% 
+  # mutate(s_date = lubridate::as_date(s_datetime), 
+  #        month_n = substr(s_date, 1, 7) %>% factor %>% as.numeric(), 
+  #        month = lubridate::month(s_date), 
+  #        month_name = month.abb[month],
+  #        year = lubridate::year(s_date), 
+  #        yearMonth = paste0(year, '-', ifelse(nchar(month)==2, month, paste0('0',month))),
+  #        month_name_year = paste0(month_name, "-", year)) %>% 
+  arrange(prom_date) %>% 
   filter(!(Incident_Ticket %in% omitOutliersTicket)) %>% 
   left_join(sy %>% select(System_Acronym, VASI_Id, AMOITAM_Portfolio),
             by = c('Primary_Culpable_System' = "System_Acronym")) %>%
@@ -67,40 +62,45 @@ d = d_all %>%
                   as.character(System_Acronym)),
          planned = ifelse(is.na(planned), "Not Caused by Change", planned))
 
+d[d$number == "INC21851517","prom_datetime"] = "2022-03-22 14:35:47" %>% as_datetime(tz = "EST")
+d[d$number == "INC21851517","prom_date"] = "2022-03-22" %>% as_date()
+d[d$number == "INC21851517","weekNum"] = 1
+
 refDate = str_split(getwd(), "/")[[1]] %>% last() %>% as_date()  ## This MUST be a Friday
 curWeekSun = refDate - days(12) # Sunday of week before
 curWeekSat = refDate - days(6) # Saturday of week before
 
-d %<>% filter(s_date <= curWeekSat)
+d %<>% filter(prom_date <= curWeekSat)
 
-d$month_name_year = factor(d$month_name_year, levels = unique(d$month_name_year))
+d$prom_month_name_year = factor(d$prom_month_name_year, levels = unique(d$prom_month_name_year))
 
-yearMonth_levels = unique(c(d$yearMonth %>% unique, substr(startOfCurrentMonth, 1, 7)))
-d$yearMonth = factor(d$yearMonth, levels = yearMonth_levels)
+yearMonth_levels = unique(c(d$prom_yearMonth %>% unique, substr(startOfCurrentMonth, 1, 7)))
+d$yearMonth = factor(d$prom_yearMonth, levels = yearMonth_levels)
 d$Incident_Priority = factor(d$Incident_Priority, levels = c("1 - Critical", "2 - High"))
 d$Incident_Pillar = factor(d$Incident_Pillar, levels = c("Benefits", "Corporate", "Enterprise Services", "Health"))
 d$Incident_State = factor(d$Incident_State, levels = c("Canceled", "In Progress", "Resolved"))
 
-weekTable = data.frame(date = seq.Date("2019-07-14" %>% as_date(),
-  # d %>% pull(s_date) %>% first(), 
-                                       curWeekSat, by = 'day')) %>% 
-  mutate(weekday = lubridate::wday(date, label = TRUE)) %>% 
-  arrange(desc(date))
+# weekTable = data.frame(date = seq.Date("2019-07-14" %>% as_date(),
+#   # d %>% pull(s_date) %>% first(), 
+#                                        curWeekSat, by = 'day')) %>% 
+#   mutate(weekday = lubridate::wday(date, label = TRUE)) %>% 
+#   arrange(desc(date))
+# 
+# sunTable = weekTable %>% filter(weekday == "Sun") %>%  
+#   mutate(x = 1, weekNum = cumsum(x) - 1, 
+#          weekName = paste0(date, " to ", date + lubridate::days(6)))
+#   
+# weekTable %<>% left_join(sunTable %>% select(-x), by = c("date", "weekday")) %>% 
+#   arrange(desc(date)) %>% 
+#   fill(weekNum, weekName, .direction = "up")
 
-sunTable = weekTable %>% filter(weekday == "Sun") %>%  
-  mutate(x = 1, weekNum = cumsum(x) - 1, 
-         weekName = paste0(date, " to ", date + lubridate::days(6)))
-  
-weekTable %<>% left_join(sunTable %>% select(-x), by = c("date", "weekday")) %>% 
-  arrange(desc(date)) %>% 
-  fill(weekNum, weekName, .direction = "up")
-
-d %<>% left_join(weekTable %>% select(date, weekNum, weekName), by = c('s_date' = 'date')) %>% 
+d %<>% 
+  # left_join(weekTable %>% select(date, weekNum, weekName), by = c('prom_date' = 'date')) %>% 
   mutate(Primary_Culpable_System = as.character(Primary_Culpable_System),
          Primary_SystemApplication_Affected = as.character(Primary_SystemApplication_Affected),
          Primary_Culpable_System = ifelse(Primary_Culpable_System == "Telecommunications Services", "Telecom Services", Primary_Culpable_System),
          Primary_SystemApplication_Affected = ifelse(Primary_SystemApplication_Affected == "Telecommunications Services", "Telecom Services", Primary_SystemApplication_Affected),
-         curWeek = ifelse(weekNum == 0, 1, 0))
+         curWeek = ifelse(weekNum == 1, 1, 0))
 
 d %<>% 
   mutate(Primary_Culpable_System = ifelse(Primary_Culpable_System == "Other" | 
@@ -112,18 +112,26 @@ d %<>%
                            incident_state == "On Hold" ~ "In Progress",
                            TRUE ~ incident_state)) 
 
+d[d$number == "INC21851517","state"] = "Canceled"
+
 d_bkup <- d
 
 d %>% filter(curWeek == 1) %>% 
-  select(number, s_datetime, ttr, state, Incident_State,  
+  select(number, prom_datetime, ttr, state, Incident_State,  
          Primary_Culpable_System, Primary_Culpable_System_Justification, planned, 
          Incident_Short_Description) %>% 
-  arrange(s_datetime) %>% 
-  mutate(proposed_on = as.character(s_datetime)) %>% 
-  select(number, proposed_on, everything(), -s_datetime) %>% 
+  arrange(prom_datetime) %>% 
+  mutate(promoted_on = as.character(prom_datetime)) %>% 
+  select(number, promoted_on, everything(), -prom_datetime) %>% 
   fwrite(here("data/current_week_data.csv"))
 
-
+# d %>% filter(prom_date >= '2022-02-26' & prom_date <= '2022-03-25') %>% 
+#   mutate_at(vars(date_time, prom_datetime), ~as.character(.)) %>% 
+#   select(number, Incident_State, date_time, prom_datetime, Primary_Culpable_System, Description_of_Fix) %>% 
+#   fwrite(here("data/inc_data_20220226_20220325_eng.csv"))
+# 
+# d %>% filter(prom_date >= '2022-02-26' & prom_date <= '2022-03-25') %>% 
+#   fwrite(here("data/inc_data_20220226_20220325.csv"))
 
 # new_culps = fread(here("data/updated_culps.csv")) %>% 
 #   rename(p1 = Primary_Culpable_System)
@@ -305,16 +313,16 @@ d %>%
 ##### Top Right Table #####
 
 slide_topRight_table = d %>% filter(curWeek == 1) %>% 
-  select(s_date, state, ttr) %>% 
-  right_join(weekTable %>% filter(weekNum == 0) %>% select(date, weekday), by = c('s_date' = 'date')) %>% 
-  group_by(weekday, s_date) %>% 
+  select(prom_date, state, ttr) %>% 
+  right_join(weekTable %>% filter(weekNum == 1) %>% select(date, weekday), by = c('prom_date' = 'date')) %>% 
+  group_by(weekday, prom_date) %>% 
   summarize(Canceled = sum(state == "Canceled"),
             `In Progress` = sum(state == "In Progress"),
             Resolved = sum(state == "Resolved"),
             `Total Time to Repair (TTR)` = sum(ttr, na.rm = TRUE) %>% round(1), 
             .groups = 'drop') %>% 
   mutate_if(is.numeric, ~ifelse(is.na(.), 0, .)) %>% 
-  rename(Weekday = weekday, Date = s_date)
+  rename(Weekday = weekday, Date = prom_date)
 
 slide_topRight_table %<>% 
   mutate(Date = as.character(Date)) %>% 
@@ -348,6 +356,9 @@ weeklyPlot_d = d %>% filter(weekNum <= 51 & state == "Resolved") %>%
   mutate(sundayDate = factor(sundayDate))
   
 
+weeklyPlot_dist = weeklyPlot_d %>% distinct(sundayDate, sizetext, colortext) %>% 
+  mutate(sundayDate = as.character(sundayDate))
+
 weeklyPlot = weeklyPlot_d %>% 
   # mutate(sundayDate2 = ifelse(weekNum %% 4 == 0, as.character(sundayDate), "") %>% factor()) %>% 
   ggplot(aes(sundayDate, mttr)) + 
@@ -366,7 +377,7 @@ weeklyPlot = weeklyPlot_d %>%
                                    colour = weeklyPlot_d$colortext))
   
 pillarCounts = d %>% 
-  filter(date >= "2019-09-01") %>% 
+  filter(prom_date >= "2019-09-01") %>% 
   count(weekNum, weekName, Incident_Pillar) %>% rowwise() %>% 
   mutate(sunday = str_split(weekName, " ")[[1]][1]) %>% ungroup() %>% 
   filter(!is.na(sunday)) %>% 
@@ -395,7 +406,7 @@ pillarPlot = pillarCounts %>%
   scale_fill_manual("Business Line", values = pillarColors)
 
 planned_d = d %>% filter(weekNum %in% 0:12) %>% 
-  mutate(group = ifelse(weekNum == 0, paste0(w11, ' to ', w22), "Previous 12 Weeks")) %>% 
+  mutate(group = ifelse(weekNum == 1, paste0(w11, ' to ', w22), "Previous 12 Weeks")) %>% 
   group_by(group) %>% 
   count(planned) %>% 
   mutate(fraction = n / sum(n), 
@@ -433,10 +444,12 @@ arrangeGrob(plannedPlot1, plannedPlot2, ncol = 2,
                                          gp=gpar(fontsize=12,font="Ariel"))) %>% 
   ggsave(file = here("data/plannedPlot.png"), height = slide1_c[1], width = slide1_c[2])
 
-planned_d = d %>% filter(s_date > '2021-03-01') %>% 
+planned_d = d %>% filter(prom_date > '2021-03-01') %>% 
   mutate(sundayDate = map_chr(weekName, ~str_split(., " ")[[1]][1])) %>% 
   count(planned, weekNum, sundayDate) %>% 
   arrange(desc(weekNum)) %>% 
+  mutate(colortext = ifelse(weekNum %% 2 == 0, "black", "white"),
+         sizetext = ifelse(weekNum %% 2 == 0, 8, 1)) %>% 
   mutate(sundayDate = factor(sundayDate))
 
 plannedPlot = ggplot(planned_d, aes(sundayDate, n, fill = planned)) + 
@@ -449,10 +462,10 @@ plannedPlot = ggplot(planned_d, aes(sundayDate, n, fill = planned)) +
   xlab("\n Week (Date on Sunday)") + 
   ggtitle("Weekly Counts of Major Incidents by Change Status R12 Months") + 
   theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, 
-                                   size = weeklyPlot_d$sizetext,
-                                   colour = weeklyPlot_d$colortext))
+                                   size = planned_d %>% distinct(sundayDate, sizetext) %>% pull(sizetext),
+                                   colour = planned_d %>% distinct(sundayDate, colortext) %>% pull(colortext)))
 
-planned_percents = d %>% filter(s_date > '2021-03-01') %>% 
+planned_percents = d %>% filter(prom_date > '2021-03-01') %>% 
   count(planned) %>% mutate(p = prop.table(n)*100)
 
 ##### Bottom Right graph #####
@@ -502,39 +515,39 @@ culp_systems = count_culps %>%
 culpTable_0 = d %>% filter(curWeek == 0) %>% 
   filter(Primary_Culpable_System %in% culp_systems) %>% 
   group_by(Primary_Culpable_System) %>% 
-  slice(n()) %>% select(s_date, Primary_Culpable_System, curWeek) %>% 
+  slice(n()) %>% select(prom_date, Primary_Culpable_System, curWeek) %>% 
   ungroup() %>% 
   bind_rows(d %>% filter(curWeek == 1) %>% 
               group_by(Primary_Culpable_System, curWeek) %>% 
               slice(n()) %>% 
               ungroup() %>% 
-              select(s_date, Primary_Culpable_System, curWeek)) %>%
-  mutate(s_date = as.character(s_date)) %>% 
-  pivot_wider(names_from = curWeek, values_from = s_date) %>% 
+              select(prom_date, Primary_Culpable_System, curWeek)) %>%
+  mutate(prom_date = as.character(prom_date)) %>% 
+  pivot_wider(names_from = curWeek, values_from = prom_date) %>% 
   mutate(`0` = ifelse(Primary_Culpable_System == "Under Review", NA, `0`),
          days_since = as_date(`1`) - as_date(`0`)) %>% 
   inner_join(count_culps, by = 'Primary_Culpable_System') %>% 
   arrange(days_since) %>% 
   select(Primary_Culpable_System, n, tttr, `0`, `1`, days_since) %>% 
   rename(`Culpable System` = Primary_Culpable_System, 
-         `Total TTR (Hours)` = tttr,
+         `TTR (Hours)` = tttr,
          Count = n,
          `Most Recent Date Prior to Current Week` = `0`,
-         `Earliest Date for Current Week` = `1`,
+         `Earliest Occurrence This Period` = `1`,
          `Days Since Last Major Incident` = days_since)
 
 if("EHRM" %in% culpTable_0$`Culpable System`){
   ehrm_culp = d %>% filter(curWeek == 0) %>% 
     filter(grepl("cerner|ehrm", Primary_Culpable_System, ignore.case = TRUE)) %>% 
     group_by(Primary_Culpable_System) %>% 
-    slice(n()) %>% select(s_date, Primary_Culpable_System, curWeek) %>% 
+    slice(n()) %>% select(prom_date, Primary_Culpable_System, curWeek) %>% 
     ungroup() %>% 
-    arrange(s_date) %>% 
+    arrange(prom_date) %>% 
     slice(n())
   
   culpTable_0 %<>% 
     mutate(`Most Recent Date Prior to Current Week` = ifelse(`Culpable System` == "EHRM", 
-                                                             ehrm_culp$s_date %>% as.character(),
+                                                             ehrm_culp$prom_date %>% as.character(),
                                                              `Most Recent Date Prior to Current Week`),
            `Days Since Last Major Incident` = as_date(`Earliest Date for Current Week`) - as_date(`Most Recent Date Prior to Current Week`)) %>% 
     arrange(`Days Since Last Major Incident`)
@@ -550,6 +563,7 @@ if("Under Review" %in% culpTable_0$`Culpable System`){
 
 culpTable = culpTable_0 %>% 
   flextable() %>% 
+  fontsize(j = 1:6, part = "all", size = 10) %>% 
   width(j = 1, width = .95) %>%
   width(j = 2, width = .55) %>%
   width(j = 3, width = .7) %>%
@@ -572,15 +586,15 @@ aff_systems = count_affs %>%
 affTable = d %>% filter(curWeek == 0) %>% 
   filter(Primary_SystemApplication_Affected %in% aff_systems) %>% 
   group_by(Primary_SystemApplication_Affected) %>% 
-  slice(n()) %>% select(s_date, Primary_SystemApplication_Affected, curWeek) %>% 
+  slice(n()) %>% select(prom_date, Primary_SystemApplication_Affected, curWeek) %>% 
   ungroup() %>% 
   bind_rows(d %>% filter(curWeek == 1) %>% 
               group_by(Primary_SystemApplication_Affected, curWeek) %>% 
               slice(n()) %>% 
               ungroup() %>% 
-              select(s_date, Primary_SystemApplication_Affected, curWeek)) %>%
-  mutate(s_date = as.character(s_date)) %>% 
-  pivot_wider(names_from = curWeek, values_from = s_date) %>% 
+              select(prom_date, Primary_SystemApplication_Affected, curWeek)) %>%
+  mutate(prom_date = as.character(prom_date)) %>% 
+  pivot_wider(names_from = curWeek, values_from = prom_date) %>% 
   mutate(days_since = as_date(`1`) - as_date(`0`)) %>% 
   inner_join(count_affs, by = 'Primary_SystemApplication_Affected') %>% 
   arrange(days_since) %>% 
@@ -612,12 +626,12 @@ dAfter %>% slice(which.max(adist1)) %>% select(Incident_Ticket, date, Incident_S
 dates1 = d %>% filter(curWeek == 0 & grepl("JLV", Incident_Short_Description) & 
                grepl("Nationwide", Incident_Short_Description) & 
                grepl("unavailable", Incident_Short_Description, ignore.case = T)) %>% 
-  select(number, s_date, Incident_Short_Description) %>% pull(s_date)
+  select(number, prom_date, Incident_Short_Description) %>% pull(prom_date)
 
 (dates1[2:length(dates1)] - lag(dates1)[2:length(dates1)]) %>% mean()
 
 dates1 = d %>% filter(curWeek == 0 & Primary_Culpable_System == "VMware vCenter Server") %>% 
-  pull(s_date)
+  pull(prom_date)
 
 ##### Distributions of Weekly Counts and Total TTR #####
 
@@ -652,7 +666,7 @@ dplot1 = d_dist %>%
 d_dist1 = d_dist %>%
   count(n)
 maxVal_counts = d_dist1 %>% arrange(desc(nn)) %>% slice(1) %>% pull(nn)
-weekVal_counts = d_dist %>% filter(weekNum == 0) %>% pull(n)
+weekVal_counts = d_dist %>% filter(weekNum == 1) %>% pull(n)
 xVal_counts = dd_counts$y[dd_counts$x > weekVal_counts - 1 & dd_counts$x < weekVal_counts + 1] %>% median()
 max1Count = d_dist1 %>% arrange(desc(nn)) %>% slice(1) %>% pull(nn)
 
@@ -660,9 +674,7 @@ dplot1 = d_dist1 %>%
   ggplot(aes(n, nn)) +
   geom_col(color = 'black', fill = 'white') +
   geom_vline(data = d_dist, aes(xintercept = mean(n)), linetype = 'dashed') +
-  geom_vline(aes(xintercept = weekVal_counts), linetype = 'dashed', col = 'red') +
-  # geom_segment(aes(x = mean(n), xend = mean(n), y = 0, yend = maxVal_counts), linetype = 'dashed') +
-  # geom_segment(aes(x = weekVal_counts, xend = weekVal_counts, y = 0, yend = xVal_counts), col = 'red', linetype = 'dashed') +
+  geom_vline(xintercept = weekVal_counts, linetype = 'dashed', col = 'red') +
   xlab("\nWeekly Count") +
   ylab("Number of Occurrences") +
   scale_y_continuous(breaks = seq(0, max1Count, by = 2), minor_breaks = NULL) +
@@ -692,7 +704,6 @@ dplot2 = d_dist %>%
   ggplot(aes(total_ttr)) + 
   geom_density() + 
   scale_x_continuous(breaks = seq(0, 1250, by = 250), minor_breaks = NULL) +
-  # scale_x_continuous(breaks = breakLines, minor_breaks = NULL) + 
   geom_segment(aes(x = mean(total_ttr), xend = mean(total_ttr), y = 0, yend = maxVal_ttr), linetype = 'dashed') + 
   geom_segment(data = prev5, aes(x = x, xend = x, y = 0, yend = y), col = "grey", linetype = 'dashed') + 
   geom_segment(aes(x = 950, xend = 1050, y = breakLinesy[6] + .0005, yend = breakLinesy[6] + .0005), linetype = 'dashed') + 

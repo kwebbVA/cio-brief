@@ -25,7 +25,7 @@ d %<>% rename_all(make_nice_cols)
 s %<>% rename_all(make_nice_cols)
 
 #Identify date cols
-dateCols = grep('Date|Incident_Promoted_to_Major_Incident',colnames(d), value =T)
+dateCols = grep('Date|Incident_Promoted_to_Major_Incident', colnames(d), value =T)
 
 startOfCurrentMonth = floor_date(Sys.Date(), 'month')
 startOfLastMonth = floor_date(Sys.Date(), 'month') - months(1)
