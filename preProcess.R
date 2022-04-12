@@ -224,6 +224,12 @@ cio_theme = theme(
 )
 cio_x =  labs(x = "Month Issue Date")
 
+#Mask Telecom and Network to Voice and Data
+d_all[d_all$Primary_Culpable_System == "Telecom Services","Primary_Culpable_System"] = "Voice"
+d_all[d_all$Primary_Culpable_System == "Network Services","Primary_Culpable_System"] = "Data"
+d_all[d_all$Primary_Culpable_System == "Network Services (Wireless)","Primary_Culpable_System"] = "Data (Wireless)"
+
+
 #d_all %>% write.csv(paste0('d_all_', Sys.Date(), '.csv'), row.names = F)
 
 #sum(d_all$Facilities_Affected == "", na.rm = FALSE)
